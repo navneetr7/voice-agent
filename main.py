@@ -14,6 +14,8 @@ import logging
 from typing import Optional
 from twilio.rest import Client
 
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI()
 
 # Load environment variables from .env
@@ -23,9 +25,6 @@ ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
 elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
-
-# Set up basic logging
-logging.basicConfig(level=logging.INFO)
 
 # Pydantic model for tool input
 class OrderStatusInput(BaseModel):
@@ -120,6 +119,7 @@ async def elevenlabs_ws(websocket: WebSocket):
 
 @app.websocket("/audio")
 async def audio_ws(websocket: WebSocket):
+    logging.basicConfig(level=logging.INFO)
     logging.info("WebSocket /audio: connection attempt")
     await websocket.accept()
     logging.info("WebSocket /audio: connection accepted")
@@ -129,6 +129,9 @@ async def audio_ws(websocket: WebSocket):
         logging.info("Connecting to ElevenLabs WebSocket...")
         async with websockets.connect(elevenlabs_ws_url, extra_headers=headers) as el_ws:
             logging.info("Connected to ElevenLabs WebSocket.")
+            await el_ws.send(json.dumps({
+                "audio_start": {"type": "twilio", "encoding": "mulaw", "sample_rate": 8000}
+            }))
             async def twilio_to_elevenlabs():
                 logging.info("Listening for audio from Twilio")
                 while True:
@@ -208,4 +211,11 @@ async def outgoing_call(input: OutgoingCallInput):
         )
         return {"result": f"Call initiated", "call_sid": call.sid}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Twilio call failed: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Twilio call failed: {str(e)}")
+
+@app.get("/test")
+def test():
+    print("Test route called")
+    return {"status": "ok"}
+
+print("Registered routes:", [route.path for route in app.routes]) 
