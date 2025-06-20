@@ -104,6 +104,7 @@ async def elevenlabs_ws(websocket: WebSocket):
             elevenlabs_client,
             ELEVENLABS_AGENT_ID,
             requires_auth=bool(ELEVENLABS_API_KEY),
+            audio_interface=DefaultAudioInterface(),
             callback_agent_response=lambda response: asyncio.create_task(websocket.send_text(f"Agent: {response}")),
             callback_agent_response_correction=lambda original, corrected: asyncio.create_task(websocket.send_text(f"Agent: {original} -> {corrected}")),
             callback_user_transcript=lambda transcript: asyncio.create_task(websocket.send_text(f"User: {transcript}")),
