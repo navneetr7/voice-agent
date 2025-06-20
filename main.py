@@ -142,6 +142,10 @@ async def audio_ws(websocket: WebSocket):
             await el_ws.send(json.dumps({
                 "audio_start": {"type": "twilio", "encoding": "mulaw", "sample_rate": 8000}
             }))
+            import time
+            silence = b'\xff' * 800  # 100ms of mu-law silence at 8kHz
+            last_audio_time = time.time()
+            audio_sent = False
             async def twilio_to_elevenlabs():
                 logging.info("Listening for audio from Twilio")
                 while True:
@@ -161,15 +165,25 @@ async def audio_ws(websocket: WebSocket):
                         logging.error(f"Error in twilio_to_elevenlabs: {e}")
                         break
             async def elevenlabs_to_twilio():
+                nonlocal last_audio_time, audio_sent
                 logging.info("Waiting for ElevenLabs audio response")
                 while True:
                     try:
-                        msg = await el_ws.recv()
+                        try:
+                            msg = await asyncio.wait_for(el_ws.recv(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            # No audio from ElevenLabs, send silence to Twilio
+                            if time.time() - last_audio_time > 0.1:
+                                await websocket.send_bytes(silence)
+                                logging.info("Sent 100ms of mu-law silence to Twilio (keepalive)")
+                            continue
                         logging.info(f"Received message from ElevenLabs: {type(msg)}")
                         if isinstance(msg, bytes):
                             logging.info(f"Forwarding {len(msg)} bytes of audio to Twilio (raw bytes)")
                             logging.info(f"First 10 bytes: {msg[:10].hex()}")
                             await websocket.send_bytes(msg)
+                            last_audio_time = time.time()
+                            audio_sent = True
                         else:
                             try:
                                 event = json.loads(msg)
@@ -179,6 +193,8 @@ async def audio_ws(websocket: WebSocket):
                                     logging.info(f"Forwarding {len(audio_bytes)} bytes of decoded audio to Twilio (from ElevenLabs)")
                                     logging.info(f"First 10 bytes: {audio_bytes[:10].hex()}")
                                     await websocket.send_bytes(audio_bytes)
+                                    last_audio_time = time.time()
+                                    audio_sent = True
                                 elif event.get("type") == "conversation_initiation_metadata":
                                     logging.info(f"Conversation metadata: {event}")
                                 elif event.get("type") == "agent_response" and "agent_response_event" in event:
