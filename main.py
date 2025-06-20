@@ -124,6 +124,15 @@ async def elevenlabs_ws(websocket: WebSocket):
     finally:
         await websocket.close()
 
+async def send_silence_periodically(websocket, stop_event):
+    silence = b'\xff' * 160  # 20ms of silence at 8000Hz MuLaw
+    while not stop_event.is_set():
+        try:
+            await websocket.send_bytes(silence)
+            await asyncio.sleep(0.2)
+        except Exception:
+            break
+
 @app.websocket("/audio")
 async def audio_ws(websocket: WebSocket):
     logging.basicConfig(level=logging.INFO)
@@ -132,6 +141,7 @@ async def audio_ws(websocket: WebSocket):
     logging.info("WebSocket /audio: connection accepted")
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={ELEVENLABS_AGENT_ID}"
     headers = {"xi-api-key": ELEVENLABS_API_KEY} if ELEVENLABS_API_KEY else {}
+    stop_silence = asyncio.Event()
     try:
         logging.info("Connecting to ElevenLabs WebSocket...")
         async with websockets.connect(elevenlabs_ws_url, extra_headers=headers) as el_ws:
@@ -165,6 +175,7 @@ async def audio_ws(websocket: WebSocket):
                         logging.info(f"Received message from ElevenLabs: {type(msg)}")
                         if isinstance(msg, bytes):
                             logging.info(f"Forwarding {len(msg)} bytes of audio to Twilio")
+                            stop_silence.set()
                             await websocket.send_bytes(msg)
                         else:
                             try:
@@ -173,6 +184,7 @@ async def audio_ws(websocket: WebSocket):
                                     audio_b64 = event["audio_event"]["audio_base_64"]
                                     audio_bytes = base64.b64decode(audio_b64)
                                     logging.info(f"Forwarding {len(audio_bytes)} bytes of decoded audio to Twilio")
+                                    stop_silence.set()
                                     await websocket.send_bytes(audio_bytes)
                                 elif event.get("type") == "agent_response" and "agent_response_event" in event:
                                     logging.info(f"Agent response: {event['agent_response_event']['agent_response']}")
@@ -183,7 +195,11 @@ async def audio_ws(websocket: WebSocket):
                     except Exception as e:
                         logging.error(f"Error in elevenlabs_to_twilio: {e}")
                         break
-            await asyncio.gather(twilio_to_elevenlabs(), elevenlabs_to_twilio())
+            await asyncio.gather(
+                twilio_to_elevenlabs(),
+                elevenlabs_to_twilio(),
+                send_silence_periodically(websocket, stop_silence)
+            )
     except Exception as e:
         logging.error(f"WebSocket /audio: error: {e}")
     finally:
