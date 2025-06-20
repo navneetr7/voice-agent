@@ -13,6 +13,7 @@ from pydantic import BaseModel
 import logging
 from typing import Optional
 from twilio.rest import Client
+import base64
 
 logging.basicConfig(level=logging.INFO)
 
@@ -142,9 +143,17 @@ async def audio_ws(websocket: WebSocket):
                 logging.info("Listening for audio from Twilio")
                 while True:
                     try:
-                        data = await asyncio.wait_for(websocket.receive_bytes(), timeout=60)
-                        logging.info(f"Received {len(data)} bytes from Twilio")
-                        await el_ws.send(data)
+                        msg = await websocket.receive()
+                        if msg["type"] == "websocket.receive":
+                            if "bytes" in msg:
+                                data = msg["bytes"]
+                                logging.info(f"Received {len(data)} bytes from Twilio")
+                                await el_ws.send(data)
+                            elif "text" in msg:
+                                logging.info(f"Received text from Twilio: {msg['text']}")
+                        elif msg["type"] == "websocket.disconnect":
+                            logging.info("Twilio WebSocket disconnected")
+                            break
                     except Exception as e:
                         logging.error(f"Error in twilio_to_elevenlabs: {e}")
                         break
@@ -154,7 +163,21 @@ async def audio_ws(websocket: WebSocket):
                     try:
                         msg = await el_ws.recv()
                         logging.info(f"Received message from ElevenLabs: {type(msg)}")
-                        await websocket.send_bytes(msg)
+                        if isinstance(msg, str):
+                            try:
+                                event = json.loads(msg)
+                                if event.get("type") == "audio" and "audio_event" in event:
+                                    audio_b64 = event["audio_event"]["audio_base_64"]
+                                    audio_bytes = base64.b64decode(audio_b64)
+                                    await websocket.send_bytes(audio_bytes)
+                                elif event.get("type") == "agent_response" and "agent_response_event" in event:
+                                    logging.info(f"Agent response: {event['agent_response_event']['agent_response']}")
+                                else:
+                                    pass
+                            except Exception as e:
+                                logging.error(f"Error parsing ElevenLabs event: {e}")
+                        else:
+                            await websocket.send_bytes(msg)
                     except Exception as e:
                         logging.error(f"Error in elevenlabs_to_twilio: {e}")
                         break
@@ -162,7 +185,8 @@ async def audio_ws(websocket: WebSocket):
     except Exception as e:
         logging.error(f"WebSocket /audio: error: {e}")
     finally:
-        await websocket.close()
+        if not websocket.client_state.name == "DISCONNECTED":
+            await websocket.close()
         logging.info("WebSocket /audio: connection closed")
 
 @app.post("/tools/zendesk_lookup")
