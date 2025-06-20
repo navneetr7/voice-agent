@@ -42,7 +42,13 @@ class OutgoingCallInput(BaseModel):
 # --- Twilio Webhook: Returns TwiML to start audio stream ---
 @app.post("/voice")
 def voice_response():
-    TWIML_XML = '''<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n  <Start>\n    <Stream url=\"wss://your-backend.com/audio\" />\n  </Start>\n  <Say>Connecting you to our voice assistant...</Say>\n</Response>'''
+    TWIML_XML = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Start>
+    <Stream url="wss://voice-agent-nacv.onrender.com/audio" />
+  </Start>
+  <Say>Connecting you to our voice assistant...</Say>
+</Response>'''
     return Response(content=TWIML_XML, media_type="text/xml")
 
 # --- Tool Call Handler (for ElevenLabs tool calls) ---
