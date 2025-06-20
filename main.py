@@ -119,12 +119,9 @@ async def elevenlabs_ws(websocket: WebSocket):
 
 @app.websocket("/audio")
 async def audio_ws(websocket: WebSocket):
-    """
-    Receives audio from Twilio, relays to ElevenLabs ConvAI WebSocket API,
-    and sends ElevenLabs audio responses back to Twilio.
-    Exits if no audio is received for 60 seconds (timeout).
-    """
+    logging.info("Twilio is attempting to connect to /audio")
     await websocket.accept()
+    logging.info("Twilio WebSocket connection accepted at /audio")
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={ELEVENLABS_AGENT_ID}"
     headers = {"xi-api-key": ELEVENLABS_API_KEY} if ELEVENLABS_API_KEY else {}
     try:
@@ -134,6 +131,7 @@ async def audio_ws(websocket: WebSocket):
             }))
             last_audio_time = asyncio.get_event_loop().time()
             async def twilio_to_elevenlabs():
+                logging.info("Listening for audio from Twilio")
                 nonlocal last_audio_time
                 while True:
                     try:
@@ -145,6 +143,7 @@ async def audio_ws(websocket: WebSocket):
                         await websocket.close()
                         break
             async def elevenlabs_to_twilio():
+                logging.info("Waiting for ElevenLabs audio response")
                 while True:
                     msg = await el_ws.recv()
                     # Handle bytes or str
