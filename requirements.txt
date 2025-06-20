@@ -1,6 +1,6 @@
      fastapi
      uvicorn
-     websockets
+     websockets>=10.0,<12.0
      requests
      elevenlabs
      python-dotenv
