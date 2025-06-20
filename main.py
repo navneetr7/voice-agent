@@ -120,67 +120,41 @@ async def elevenlabs_ws(websocket: WebSocket):
 
 @app.websocket("/audio")
 async def audio_ws(websocket: WebSocket):
-    logging.info("Twilio is attempting to connect to /audio")
+    logging.info("WebSocket /audio: connection attempt")
     await websocket.accept()
-    logging.info("Twilio WebSocket connection accepted at /audio")
+    logging.info("WebSocket /audio: connection accepted")
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={ELEVENLABS_AGENT_ID}"
     headers = {"xi-api-key": ELEVENLABS_API_KEY} if ELEVENLABS_API_KEY else {}
     try:
+        logging.info("Connecting to ElevenLabs WebSocket...")
         async with websockets.connect(elevenlabs_ws_url, extra_headers=headers) as el_ws:
-            await el_ws.send(json.dumps({
-                "audio_start": {"type": "twilio", "encoding": "mulaw", "sample_rate": 8000}
-            }))
-            last_audio_time = asyncio.get_event_loop().time()
+            logging.info("Connected to ElevenLabs WebSocket.")
             async def twilio_to_elevenlabs():
                 logging.info("Listening for audio from Twilio")
-                nonlocal last_audio_time
                 while True:
                     try:
                         data = await asyncio.wait_for(websocket.receive_bytes(), timeout=60)
-                        last_audio_time = asyncio.get_event_loop().time()
+                        logging.info(f"Received {len(data)} bytes from Twilio")
                         await el_ws.send(data)
-                    except asyncio.TimeoutError:
-                        logging.info("No audio received from Twilio for 60 seconds. Closing connection.")
-                        await websocket.close()
+                    except Exception as e:
+                        logging.error(f"Error in twilio_to_elevenlabs: {e}")
                         break
             async def elevenlabs_to_twilio():
                 logging.info("Waiting for ElevenLabs audio response")
                 while True:
-                    msg = await el_ws.recv()
-                    # Handle bytes or str
-                    if isinstance(msg, bytes):
-                        try:
-                            event = json.loads(msg.decode())
-                            # Logging for dev/testing
-                            if "transcript" in event:
-                                logging.info(f"User transcript: {event['transcript']['text']}")
-                            if "tool_call" in event:
-                                logging.info(f"Tool called: {event['tool_call']['name']} with {event['tool_call']['parameters']}")
-                            if "response" in event:
-                                logging.info(f"Agent response: {event['response']}")
-                        except Exception:
-                            # Not JSON, assume audio
-                            await websocket.send_bytes(msg)
-                    else:
-                        try:
-                            event = json.loads(msg)
-                            # Logging for dev/testing
-                            if "transcript" in event:
-                                logging.info(f"User transcript: {event['transcript']['text']}")
-                            if "tool_call" in event:
-                                logging.info(f"Tool called: {event['tool_call']['name']} with {event['tool_call']['parameters']}")
-                            if "response" in event:
-                                logging.info(f"Agent response: {event['response']}")
-                        except Exception:
-                            pass
+                    try:
+                        msg = await el_ws.recv()
+                        logging.info(f"Received message from ElevenLabs: {type(msg)}")
+                        await websocket.send_bytes(msg)
+                    except Exception as e:
+                        logging.error(f"Error in elevenlabs_to_twilio: {e}")
+                        break
             await asyncio.gather(twilio_to_elevenlabs(), elevenlabs_to_twilio())
-    except WebSocketDisconnect:
-        pass
     except Exception as e:
-        logging.error(f"/audio error: {e}")
-        await websocket.send_text("An internal error occurred.")
+        logging.error(f"WebSocket /audio: error: {e}")
     finally:
         await websocket.close()
+        logging.info("WebSocket /audio: connection closed")
 
 @app.post("/tools/zendesk_lookup")
 async def zendesk_lookup(input: ZendeskLookupInput):
