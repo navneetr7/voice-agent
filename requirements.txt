@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+websockets
+requests
+elevenlabs[pyaudio]
+elevenlabs
+python-dotenv 
