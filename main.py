@@ -163,21 +163,23 @@ async def audio_ws(websocket: WebSocket):
                     try:
                         msg = await el_ws.recv()
                         logging.info(f"Received message from ElevenLabs: {type(msg)}")
-                        if isinstance(msg, str):
+                        if isinstance(msg, bytes):
+                            logging.info(f"Forwarding {len(msg)} bytes of audio to Twilio")
+                            await websocket.send_bytes(msg)
+                        else:
                             try:
                                 event = json.loads(msg)
                                 if event.get("type") == "audio" and "audio_event" in event:
                                     audio_b64 = event["audio_event"]["audio_base_64"]
                                     audio_bytes = base64.b64decode(audio_b64)
+                                    logging.info(f"Forwarding {len(audio_bytes)} bytes of decoded audio to Twilio")
                                     await websocket.send_bytes(audio_bytes)
                                 elif event.get("type") == "agent_response" and "agent_response_event" in event:
                                     logging.info(f"Agent response: {event['agent_response_event']['agent_response']}")
                                 else:
                                     pass
-                            except Exception as e:
-                                logging.error(f"Error parsing ElevenLabs event: {e}")
-                        else:
-                            await websocket.send_bytes(msg)
+                            except Exception:
+                                logging.warning("Could not parse non-audio ElevenLabs message.")
                     except Exception as e:
                         logging.error(f"Error in elevenlabs_to_twilio: {e}")
                         break
