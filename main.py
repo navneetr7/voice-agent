@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import Response, JSONResponse
 import requests
 import os
@@ -12,6 +12,7 @@ import json
 from pydantic import BaseModel
 import logging
 from typing import Optional
+from twilio.rest import Client
 
 app = FastAPI()
 
@@ -33,6 +34,11 @@ class OrderStatusInput(BaseModel):
 # Remove /tools/get_order_status and add /tools/zendesk_lookup
 class ZendeskLookupInput(BaseModel):
     email: str
+
+# Outgoing call input model
+class OutgoingCallInput(BaseModel):
+    to: str  # Destination phone number
+    from_: Optional[str] = None  # Twilio phone number (optional, fallback to env)
 
 # --- Twilio Webhook: Returns TwiML to start audio stream ---
 @app.post("/voice")
@@ -196,4 +202,36 @@ async def zendesk_lookup(input: ZendeskLookupInput):
         else:
             return {"result": "No customer found with that email."}
     else:
-        return {"result": f"Zendesk error: {response.status_code} - {response.text}"} 
+        return {"result": f"Zendesk error: {response.status_code} - {response.text}"}
+
+@app.post("/twilio/outgoing_call")
+async def outgoing_call(input: OutgoingCallInput):
+    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+    TWILIO_API_KEY = os.getenv("TWILIO_API_KEY")
+    TWILIO_API_SECRET = os.getenv("TWILIO_API_SECRET")
+    TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+    if not input.from_:
+        input.from_ = TWILIO_PHONE_NUMBER
+    if not TWILIO_ACCOUNT_SID or not input.from_:
+        raise HTTPException(status_code=500, detail="Twilio Account SID or phone number not set.")
+    from twilio.rest import Client
+    # Prefer API Key/Secret if present, else use Auth Token
+    if TWILIO_API_KEY and TWILIO_API_SECRET:
+        client = Client(TWILIO_API_KEY, TWILIO_API_SECRET, account_sid=TWILIO_ACCOUNT_SID)
+    elif TWILIO_AUTH_TOKEN:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    else:
+        raise HTTPException(status_code=500, detail="Twilio credentials not set (need API Key/Secret or Auth Token).")
+    VOICE_WEBHOOK_URL = os.getenv("VOICE_WEBHOOK_URL")
+    if not VOICE_WEBHOOK_URL:
+        raise HTTPException(status_code=500, detail="VOICE_WEBHOOK_URL not set in environment.")
+    try:
+        call = client.calls.create(
+            to=input.to,
+            from_=input.from_,
+            url=VOICE_WEBHOOK_URL
+        )
+        return {"result": f"Call initiated", "call_sid": call.sid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Twilio call failed: {str(e)}") 
