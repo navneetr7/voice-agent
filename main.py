@@ -167,7 +167,8 @@ async def audio_ws(websocket: WebSocket):
                         msg = await el_ws.recv()
                         logging.info(f"Received message from ElevenLabs: {type(msg)}")
                         if isinstance(msg, bytes):
-                            logging.info(f"Forwarding {len(msg)} bytes of audio to Twilio")
+                            logging.info(f"Forwarding {len(msg)} bytes of audio to Twilio (raw bytes)")
+                            logging.info(f"First 10 bytes: {msg[:10].hex()}")
                             await websocket.send_bytes(msg)
                         else:
                             try:
@@ -175,14 +176,21 @@ async def audio_ws(websocket: WebSocket):
                                 if event.get("type") == "audio" and "audio_event" in event:
                                     audio_b64 = event["audio_event"]["audio_base_64"]
                                     audio_bytes = base64.b64decode(audio_b64)
-                                    logging.info(f"Forwarding {len(audio_bytes)} bytes of decoded audio to Twilio")
+                                    logging.info(f"Forwarding {len(audio_bytes)} bytes of decoded audio to Twilio (from ElevenLabs)")
+                                    logging.info(f"First 10 bytes: {audio_bytes[:10].hex()}")
                                     await websocket.send_bytes(audio_bytes)
+                                elif event.get("type") == "conversation_initiation_metadata":
+                                    logging.info(f"Conversation metadata: {event}")
                                 elif event.get("type") == "agent_response" and "agent_response_event" in event:
                                     logging.info(f"Agent response: {event['agent_response_event']['agent_response']}")
+                                elif event.get("type") == "ping":
+                                    # Respond to ping to keep connection alive
+                                    await el_ws.send(json.dumps({"type": "pong"}))
+                                    logging.info("Sent pong in response to ping event from ElevenLabs.")
                                 else:
                                     pass
-                            except Exception:
-                                logging.warning("Could not parse non-audio ElevenLabs message.")
+                            except Exception as ex:
+                                logging.warning(f"Could not parse non-audio ElevenLabs message: {ex}")
                     except Exception as e:
                         logging.error(f"Error in elevenlabs_to_twilio: {e}")
                         break
@@ -193,6 +201,25 @@ async def audio_ws(websocket: WebSocket):
         if not websocket.client_state.name == "DISCONNECTED":
             await websocket.close()
         logging.info("WebSocket /audio: connection closed")
+
+# --- Static mu-law audio test endpoint for Twilio ---
+@app.websocket("/audio_static")
+async def audio_static_ws(websocket: WebSocket):
+    import audioop
+    await websocket.accept()
+    logging.info("WebSocket /audio_static: connection accepted (static mu-law test)")
+    try:
+        # Generate 1 second of silence in mu-law (8kHz)
+        pcm_silence = b'\x00\x00' * 8000  # 16-bit PCM silence
+        mulaw_silence = audioop.lin2ulaw(pcm_silence, 2)
+        await websocket.send_bytes(mulaw_silence)
+        logging.info(f"Sent {len(mulaw_silence)} bytes of static mu-law silence to Twilio.")
+        await asyncio.sleep(2)  # Keep connection open for a bit
+    except Exception as e:
+        logging.error(f"WebSocket /audio_static: error: {e}")
+    finally:
+        await websocket.close()
+        logging.info("WebSocket /audio_static: connection closed")
 
 @app.post("/tools/zendesk_lookup")
 async def zendesk_lookup(input: ZendeskLookupInput):
